@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Default local Docker volumes
+docker-data/

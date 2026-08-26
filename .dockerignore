@@ -1,0 +1,10 @@
+.git
+.github
+.env
+API/.env
+docker-data
+__pycache__
+*.pyc
+python
+packages
+app-backup-*

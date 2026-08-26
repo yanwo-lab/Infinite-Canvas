@@ -38,6 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from runtime_paths import RuntimePaths
 
 QUIET_ACCESS_PATHS = {
     "/api/queue_status",
@@ -215,7 +216,8 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
 # --- 配置区域 ---
 
 CLIENT_ID = str(uuid.uuid4())
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RUNTIME_PATHS = RuntimePaths.from_environment()
+BASE_DIR = RUNTIME_PATHS.base_dir
 WORKFLOW_DIR = os.path.join(BASE_DIR, "workflows")
 WORKFLOW_PATH = os.path.join(WORKFLOW_DIR, "Z-Image.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -223,24 +225,25 @@ STATIC_RUNNINGHUB_DIR = os.path.join(STATIC_DIR, "runninghub")
 STATIC_RUNNINGHUB_THUMBNAIL_DIR = os.path.join(STATIC_RUNNINGHUB_DIR, "thumbnails")
 STATIC_RUNNINGHUB_API_PROVIDERS_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "api_providers.json")
 STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "models_registry.json")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+OUTPUT_DIR = RUNTIME_PATHS.output_dir
+ASSETS_DIR = RUNTIME_PATHS.assets_dir
 OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
 ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
-LOCAL_UPLOAD_DIR = os.path.join(ASSETS_DIR, "uploads")
-HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
-API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
-DATA_DIR = os.path.join(BASE_DIR, "data")
+LOCAL_UPLOAD_DIR = RUNTIME_PATHS.local_upload_dir
+HISTORY_FILE = RUNTIME_PATHS.history_file
+API_ENV_FILE = RUNTIME_PATHS.api_env_file
+DATA_DIR = RUNTIME_PATHS.data_dir
 CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
 CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
-MEDIA_PREVIEW_DIR = os.path.join(DATA_DIR, "media_previews")
+CACHE_DIR = RUNTIME_PATHS.cache_dir
+MEDIA_PREVIEW_DIR = RUNTIME_PATHS.media_preview_dir
 ASSET_LIBRARY_PATH = os.path.join(DATA_DIR, "asset_library.json")
 PROMPT_LIBRARY_PATH = os.path.join(DATA_DIR, "prompt_libraries.json")
 API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
 RUNNINGHUB_WORKFLOW_STORE_FILE = os.path.join(DATA_DIR, "runninghub_workflows.json")
 SHARED_FOLDERS_FILE = os.path.join(DATA_DIR, "shared_folders.json")
-GLOBAL_CONFIG_FILE = os.path.join(BASE_DIR, "global_config.json")
+GLOBAL_CONFIG_FILE = RUNTIME_PATHS.global_config_file
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
 LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
