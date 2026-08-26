@@ -1,0 +1,73 @@
+name: Sync Upstream
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 每 6 小时检查一次原作者仓库
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout our repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream repository
+        run: |
+          git remote add upstream https://github.com/hero8152/Infinite-Canvas.git
+          git fetch upstream main
+
+      - name: Check for upstream updates
+        id: check
+        shell: bash
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date."
+          else
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            echo "New upstream commits found."
+          fi
+
+      - name: Merge upstream
+        if: steps.check.outputs.updated == 'true'
+        shell: bash
+        run: |
+          if ! git merge --no-edit upstream/main; then
+            echo "::error::Upstream merge conflict detected. main was NOT updated."
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Check Python syntax
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          python -m py_compile main.py
+
+      - name: Check Smart Canvas JavaScript syntax
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          node --check static/js/smart-canvas.js
+
+      - name: Push merged update
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          git push origin HEAD:main
