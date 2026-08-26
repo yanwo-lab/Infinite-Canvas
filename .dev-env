@@ -1,0 +1,17 @@
+# Infinite Canvas development environment
+
+_CANVAS_PYTHON_ENV=""
+if [ -f /workspace/envs/python/3.10.12/infinite-canvas/bin/activate ]; then
+    _CANVAS_PYTHON_ENV=/workspace/envs/python/3.10.12/infinite-canvas
+elif [ -f /opt/dev-envs/python/3.10.12/infinite-canvas/bin/activate ]; then
+    _CANVAS_PYTHON_ENV=/opt/dev-envs/python/3.10.12/infinite-canvas
+else
+    echo "Infinite Canvas Python development environment not found." >&2
+    unset _CANVAS_PYTHON_ENV
+    return 1 2>/dev/null || exit 1
+fi
+
+# Activation changes PATH only in the shell that explicitly sources this file.
+source "${_CANVAS_PYTHON_ENV}/bin/activate"
+export CANVAS_PYTHON_ENV="${_CANVAS_PYTHON_ENV}"
+unset _CANVAS_PYTHON_ENV
