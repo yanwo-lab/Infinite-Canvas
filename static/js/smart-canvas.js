@@ -78,6 +78,7 @@ let minimapViewport = document.getElementById('minimapViewport');
 let canvas = null;
 let canvasUsesConnections = true;
 let nodes = [];
+let pluginHost = null;
 let selectedId = '';
 let selectedIds = [];
 let selectedImage = {nodeId:'', index:-1};
@@ -1031,7 +1032,7 @@ function isSmartGroupNode(node){
     return Boolean(node && node.type === 'smart-group');
 }
 function isSmartRunnableNode(node){
-    return Boolean(isSmartImageNode(node) || isSmartGroupNode(node) || node?.type === 'smart-minimax');
+    return Boolean(isSmartImageNode(node) || isSmartGroupNode(node) || node?.type === 'smart-minimax' || pluginHost?.isPluginNode(node));
 }
 function isHistoryGroupNode(node){
     return Boolean(isSmartImageNode(node) && (node.isHistoryGroup || node.historyFor));
@@ -5274,6 +5275,7 @@ function clearSourceBusyStateIfDownstreamDone(sourceNode, options={}){
 function clearCompletedSourceBusyStates(){
     let changed = false;
     (nodes || []).forEach(node => {
+        if(pluginHost?.isPluginNode(node)) return;
         if(clearSourceBusyStateIfDownstreamDone(node)) changed = true;
     });
     return changed;
@@ -5281,6 +5283,7 @@ function clearCompletedSourceBusyStates(){
 function hideCompletedRunTimers(){
     let changed = false;
     (nodes || []).forEach(node => {
+        if(pluginHost?.isPluginNode(node)) return;
         if(!node || node.type === 'smart-prompt') return;
         if(node.pending || node.running || node.jimengPending || !node.runFinishedAt || node.runTimerHidden) return;
         node.runTimerHidden = true;
@@ -5291,6 +5294,7 @@ function hideCompletedRunTimers(){
 function clearCompletedNodeBusyStates(){
     let changed = false;
     (nodes || []).forEach(node => {
+        if(pluginHost?.isPluginNode(node)) return;
         if(!node || !smartNodeHasCompletedResult(node) || !smartNodeInFlight(node)) return;
         markSmartNodeComplete(node);
         changed = true;
@@ -6003,9 +6007,11 @@ async function loadCanvas(){
         document.title = canvas.title || tr('canvas.smartCanvas');
         document.getElementById('smartTitle').textContent = canvas.title || tr('canvas.smartCanvas');
         nodes = (Array.isArray(canvas.nodes) ? canvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+        if(pluginHost) nodes = nodes.map(node => pluginHost.isPluginNode(node) ? pluginHost.deserializeNode(node) : node);
         migrateSmartGroupImageMembers();
         canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
         nodes.forEach(n => {
+            if(pluginHost?.isPluginNode(n)) return;
             if(n.type === 'smart-minimax') n.timelinePlaying = false;
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
@@ -6026,6 +6032,7 @@ async function loadCanvas(){
         if(canvas.settings) settings = {...settings, ...canvas.settings};
         normalizeSmartVideoModeSettings(settings, true);
         nodes.forEach(node => {
+            if(pluginHost?.isPluginNode(node)) return;
             if(node.runSettings) normalizeSmartVideoModeSettings(node.runSettings, true);
         });
         canvasDefaultSmartSettings = cloneSmartSettings(settings);
@@ -6049,10 +6056,11 @@ async function saveCanvas(){
     if(!canvasId || !canvas) return;
     savePromptDraftForCurrent();
     nodes.forEach(node => {
+        if(pluginHost?.isPluginNode(node)) return;
         node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
         if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
     });
-    canvas.nodes = nodes;
+    canvas.nodes = nodes.map(node => pluginHost?.isPluginNode(node) ? pluginHost.serializeNode(node) : node);
     canvas.settings = settingsForStorage(canvasDefaultSmartSettings || initialSmartSettings);
     canvas.viewport = {...viewport};
     const storageCanvas = canvasForStorage();
@@ -8386,6 +8394,68 @@ function rememberInlineVideoActivations(){
         if(image && mediaKindForItem(image) === 'video') image._inlineVideoActive = true;
     });
 }
+function pluginNodeHtml(node){
+    const definition = pluginHost?.getNodeDefinition(node);
+    const width = Math.max(240, Number(node.w) || 300);
+    const height = Math.max(150, Number(node.h) || 210);
+    const type = String(node.type || '').replace(/^plugin:/, '');
+    const body = pluginHost?.renderNode(node) || '';
+    const title = definition?.title || node.title || 'Unknown Plugin Node';
+    const portsHtml = direction => (pluginHost?.getNodePorts(node, direction) || []).map((port, index, list) => {
+        const side = direction === 'input' ? 'in' : 'out';
+        const top = Math.round(((index + 1) / (list.length + 1)) * 100);
+        return `<div class="node-port port-${side} plugin-port" data-port="${side}" data-port-id="${escapeHtml(port.id)}" data-port-type="${escapeHtml(port.type)}" title="${escapeHtml(port.label)} (${escapeHtml(port.type)})" style="top:${top}%"></div>`;
+    }).join('');
+    return `<div class="image-node plugin-node plugin-${escapeHtml(type)} ${isNodeSelected(node.id) ? 'selected' : ''}" data-id="${escapeHtml(node.id)}" style="left:${node.x || 0}px;top:${node.y || 0}px;width:${width}px;height:${height}px">
+        <div class="node-head"><div class="node-title">${escapeHtml(title)}</div><div class="node-actions"><button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button></div></div>
+        <div class="node-body plugin-node-body">${body}</div>
+        ${definition ? '<button class="plugin-node-run" type="button">Run</button>' : ''}
+        <div class="node-resize-handle" data-resize="1"></div>
+        ${portsHtml('input')}${portsHtml('output')}
+    </div>`;
+}
+
+async function runPluginNode(node){
+    if(!pluginHost || !node) return;
+    const results = await pluginHost.executeGraph(node.id, {canvasId});
+    const result = results.get(node.id);
+    if(result?.error) toast(result.error.message || 'Plugin execution failed');
+    else toast(`${node.title || 'Plugin'} complete`);
+    render();
+    scheduleSave();
+}
+
+function renderPluginCreateMenu(){
+    const grid = createMenu?.querySelector('.create-menu-grid');
+    if(!grid || !pluginHost) return;
+    grid.querySelectorAll('[data-plugin-create]').forEach(element => element.remove());
+    pluginHost.listNodeDefinitions().forEach(definition => {
+        const button = document.createElement('button');
+        button.className = 'create-card';
+        button.type = 'button';
+        button.dataset.createType = `plugin:${definition.type}`;
+        button.dataset.pluginCreate = definition.type;
+        button.innerHTML = `<span class="create-card-icon"><i data-lucide="${escapeHtml(definition.icon || 'blocks')}"></i></span><span><div class="create-card-title">${escapeHtml(definition.title || definition.type)}</div><div class="create-card-sub">${escapeHtml(definition.category || 'Plugin')}</div></span>`;
+        grid.appendChild(button);
+    });
+}
+
+async function initializePluginHost(){
+    try {
+        const {PluginHost} = await import('/static/js/plugin-host.js');
+        pluginHost = new PluginHost({
+            getNodes:() => nodes,
+            getConnections:() => canvas?.connections || [],
+            beforeMutation:() => pushUndo(),
+            requestRender:() => render(), requestSave:() => scheduleSave(), toast,
+            log:(level, message, detail) => console[level] ? console[level](message, detail || '') : console.log(message, detail || ''),
+        });
+        await pluginHost.loadFromApi();
+        renderPluginCreateMenu();
+    } catch(error) {
+        console.error('[plugins] host initialization failed', error);
+    }
+}
 function render(){
     if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
     rememberInlineVideoActivations();
@@ -8407,6 +8477,7 @@ function render(){
         .slice()
         .sort((a, b) => (isSmartGroupNode(a) ? 0 : 1) - (isSmartGroupNode(b) ? 0 : 1))
         .map(node => {
+        if(pluginHost?.isPluginNode(node)) return {node, html:pluginNodeHtml(node)};
         const imgs = node.images || [];
         const title = node.type === 'smart-group' ? (node.title === '万能分组' ? '智能分组' : (node.title || '智能分组')) : node.type === 'smart-prompt' ? 'Prompt' : node.type === 'smart-loop' ? 'Loop' : node.type === 'smart-minimax' ? 'MiniMax H3' : (imgs.length > 1 ? 'Group' : imgs.length ? 'Image' : escapeHtml(tr('smart.createImportNode')));
         const scale = nodeScale(node);
@@ -8470,6 +8541,10 @@ function render(){
     });
     restoreMediaPlaybackStates(mediaStates);
     bindNodeEvents();
+    world.querySelectorAll('.plugin-node').forEach(element => {
+        const node = nodes.find(item => item.id === element.dataset.id);
+        if(node) pluginHost?.bindNodeUI(element, node);
+    });
     bindConnectionEvents();
     updateComposer();
     renderMinimap();
@@ -9542,32 +9617,36 @@ function updatePortDragVisual(){
     if(portDragState.hoverTargetId){
         const targetNodeEl = world.querySelector(`.image-node[data-id="${portDragState.hoverTargetId}"]`);
         targetNodeEl?.classList.add('port-hover');
-        targetNodeEl?.querySelector(`.node-port[data-port="${portDragState.hoverPort}"]`)?.classList.add('is-active');
+        const selector = `.node-port[data-port="${portDragState.hoverPort}"][data-port-id="${CSS.escape(portDragState.hoverPortId || '')}"]`;
+        (targetNodeEl?.querySelector(selector) || targetNodeEl?.querySelector(`.node-port[data-port="${portDragState.hoverPort}"]`))?.classList.add('is-active');
     }
 }
 function handlePortDrop(drag, e){
-    const {targetId, targetPort, hit} = (() => {
+    const {targetId, targetPort, targetPortId, hit} = (() => {
         const hitEl = document.elementFromPoint(e.clientX, e.clientY);
         const portEl = hitEl?.closest?.('.node-port');
         const nodeEl = portEl?.closest?.('.image-node') || hitEl?.closest?.('.image-node');
-        let id = '', port = '';
+        let id = '', port = '', portId = '';
         if(nodeEl && nodeEl.dataset.id && nodeEl.dataset.id !== drag.fromId){
             id = nodeEl.dataset.id;
             if(portEl){
                 port = portEl.dataset.port;
+                portId = portEl.dataset.portId || (port === 'out' ? 'output' : 'input');
             } else {
                 const rect = nodeEl.getBoundingClientRect();
                 port = (e.clientX - rect.left) < rect.width / 2 ? 'in' : 'out';
             }
         }
-        return {targetId:id, targetPort:port, hit:hitEl};
+        return {targetId:id, targetPort:port, targetPortId:portId, hit:hitEl};
     })();
     if(targetId){
         const compatible = (drag.fromPort === 'out' && targetPort === 'in') || (drag.fromPort === 'in' && targetPort === 'out');
         if(!compatible){ discardPendingUndo(); render(); return; }
         const fromId = drag.fromPort === 'out' ? drag.fromId : targetId;
         const toId = drag.fromPort === 'out' ? targetId : drag.fromId;
-        if(connectInputNode(fromId, toId)){
+        const fromPortId = drag.fromPort === 'out' ? drag.fromPortId : targetPortId;
+        const toPortId = drag.fromPort === 'out' ? targetPortId : drag.fromPortId;
+        if(connectInputNode(fromId, toId, {fromPort:fromPortId, toPort:toPortId})){
             commitPendingUndo();
             render();
             scheduleSave();
@@ -9587,7 +9666,9 @@ function handlePortDrop(drag, e){
     undoSuppressed = false;
     const fromId = drag.fromPort === 'out' ? drag.fromId : newNode.id;
     const toId = drag.fromPort === 'out' ? newNode.id : drag.fromId;
-    connectInputNode(fromId, toId);
+    const fromPortId = drag.fromPort === 'out' ? drag.fromPortId : 'output';
+    const toPortId = drag.fromPort === 'out' ? 'input' : drag.fromPortId;
+    connectInputNode(fromId, toId, {fromPort:fromPortId, toPort:toPortId});
     commitPendingUndo();
     render();
     scheduleSave();
@@ -9612,6 +9693,12 @@ function bindNodeEvents(){
     world.querySelectorAll('.image-node').forEach(el => {
         const id = el.dataset.id;
         const nodeForControls = nodes.find(n => n.id === id);
+        if(pluginHost?.isPluginNode(nodeForControls)) {
+            el.querySelector('.plugin-node-run')?.addEventListener('click', event => {
+                event.preventDefault(); event.stopPropagation();
+                runPluginNode(nodeForControls).catch(error => toast(error.message || 'Plugin execution failed'));
+            });
+        }
         if(nodeForControls?.type === 'smart-prompt') bindPromptNodeControls(el, nodeForControls);
         if(nodeForControls?.type === 'smart-loop') bindLoopNodeControls(el, nodeForControls);
         if(nodeForControls?.type === 'smart-minimax') bindMinimaxNodeControls(el, nodeForControls);
@@ -9918,6 +10005,7 @@ function bindNodeEvents(){
                 portDragState = {
                     fromId:id,
                     fromPort:portType,
+                    fromPortId:port.dataset.portId || (portType === 'out' ? 'output' : 'input'),
                     currentWorld:p,
                     hoverTargetId:'',
                     hoverPort:'',
@@ -13809,16 +13897,22 @@ function stripImageGenerationMeta(img){
     delete img.promptDraftText;
     return img;
 }
-function addConnection(fromId, toId, kind='flow'){
+function addConnection(fromId, toId, kind='flow', fromPort='', toPort=''){
     if(!fromId || !toId || fromId === toId) return;
     canvas.connections = canvas.connections || [];
-    if(canvas.connections.some(c => c.from === fromId && c.to === toId && (c.kind || 'flow') === kind)) return;
-    canvas.connections.push({from:fromId, to:toId, kind});
+    if(canvas.connections.some(c => c.from === fromId && c.to === toId && (c.kind || 'flow') === kind && (c.fromPort || '') === fromPort && (c.toPort || '') === toPort)) return;
+    const connection = {from:fromId, to:toId, kind};
+    if(fromPort) connection.fromPort = fromPort;
+    if(toPort) connection.toPort = toPort;
+    canvas.connections.push(connection);
 }
-function connectInputNode(fromId, toId){
+function connectInputNode(fromId, toId, ports={}){
     const from = nodes.find(n => n.id === fromId);
     const to = nodes.find(n => n.id === toId);
     if(!from || !to || from.id === to.id) return false;
+    const fromPort = ports.fromPort || ((pluginHost?.isPluginNode(from) || pluginHost?.isPluginNode(to)) ? 'output' : '');
+    const toPort = ports.toPort || ((pluginHost?.isPluginNode(from) || pluginHost?.isPluginNode(to)) ? 'input' : '');
+    if(pluginHost && !pluginHost.canConnect(from, fromPort || 'output', to, toPort || 'input')) return false;
     if(to.type === 'smart-loop'){
         const groupImages = isSmartGroupNode(from) ? imagesForNode(from).filter(img => img?.url) : [];
         const groupPrompts = isSmartGroupNode(from) ? promptTextItemsForNode(from).filter(Boolean) : [];
@@ -13832,7 +13926,7 @@ function connectInputNode(fromId, toId){
         if(!canImage && !canPrompt) return false;
     }
     to.inputNodeIds = Array.from(new Set([...(to.inputNodeIds || []), from.id]));
-    addConnection(from.id, to.id, 'input');
+    addConnection(from.id, to.id, 'input', fromPort, toPort);
     return true;
 }
 function upstreamNodesForKinds(node, kinds=['input']){
@@ -13865,6 +13959,7 @@ function cleanupDetachedRunInputRefs(){
     if(!canvasUsesConnections) return false;
     let changed = false;
     nodes.forEach(node => {
+        if(pluginHost?.isPluginNode(node)) return;
         const hadRefs = Array.isArray(node?.runInputRefs) && node.runInputRefs.length;
         const hadPromptRefs = Array.isArray(node?.runPromptRefs) && node.runPromptRefs.length;
         const hadSource = Boolean(node?.sourceNodeId);
@@ -17063,7 +17158,7 @@ function startJimengPoll(node){
     })();
 }
 function resumeJimengPendingNodes(){
-    nodes.filter(n => n && n.jimengPending && n.jimengPending.submitId).forEach(n => {
+    nodes.filter(n => n && !pluginHost?.isPluginNode(n) && n.jimengPending && n.jimengPending.submitId).forEach(n => {
         n.jimengPending.querying = false;
         startJimengPoll(n);
     });
@@ -17198,7 +17293,7 @@ async function resumeSmartPendingNode(node, logContext={}){
     }
 }
 function resumeSmartPendingTasks(){
-    nodes.filter(node => smartPendingTasks(node).length).forEach(node => {
+    nodes.filter(node => !pluginHost?.isPluginNode(node) && smartPendingTasks(node).length).forEach(node => {
         resumeSmartPendingNode(node);
     });
 }
@@ -17441,7 +17536,8 @@ function createNodeFromMenu(type){
     closeCreateMenu();
     if(type === 'group') return createSmartGroupNode(p.x - 170, p.y - 110);
     let created = null;
-    if(type === 'prompt') created = createPromptNode(p.x - 158, p.y - 97);
+    if(type.startsWith('plugin:')) created = pluginHost?.createNode(type, {x:p.x - 150, y:p.y - 105});
+    else if(type === 'prompt') created = createPromptNode(p.x - 158, p.y - 97);
     else if(type === 'loop') created = createLoopNode(p.x - 135, p.y - 95);
     else if(type === 'minimax') created = createMinimaxNode(p.x - 520, p.y - 320);
     else created = createImageNodeAt(p);
@@ -17570,20 +17666,22 @@ window.onmousemove = e => {
         const hitEl = document.elementFromPoint(e.clientX, e.clientY);
         const portEl = hitEl?.closest?.('.node-port');
         const nodeEl = portEl?.closest?.('.image-node') || hitEl?.closest?.('.image-node');
-        let targetId = '', targetPort = '';
+        let targetId = '', targetPort = '', targetPortId = '';
         if(nodeEl && nodeEl.dataset.id && nodeEl.dataset.id !== portDragState.fromId){
             targetId = nodeEl.dataset.id;
             if(portEl){
                 targetPort = portEl.dataset.port;
+                targetPortId = portEl.dataset.portId || (targetPort === 'out' ? 'output' : 'input');
             } else {
                 const rect = nodeEl.getBoundingClientRect();
                 targetPort = (e.clientX - rect.left) < rect.width / 2 ? 'in' : 'out';
             }
             const compatible = (portDragState.fromPort === 'out' && targetPort === 'in') || (portDragState.fromPort === 'in' && targetPort === 'out');
-            if(!compatible){ targetId = ''; targetPort = ''; }
+            if(!compatible){ targetId = ''; targetPort = ''; targetPortId = ''; }
         }
         portDragState.hoverTargetId = targetId;
         portDragState.hoverPort = targetPort;
+        portDragState.hoverPortId = targetPortId;
         updatePortDragVisual();
         return;
     }
@@ -18956,6 +19054,7 @@ window.onload = async () => {
     connectAssetLibrarySyncSocket();
     await loadConfig();
     await loadAssetLibrary();
+    await initializePluginHost();
     await loadCanvas();
     syncApiKindToggleVisibility();
     render();

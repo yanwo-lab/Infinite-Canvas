@@ -1572,3 +1572,25 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
 .smart-group-summary i,.smart-group-summary svg { width:13px; height:13px; }
 .smart-group-empty { flex:1 1 auto; min-height:74px; display:flex; align-items:center; justify-content:center; gap:6px; color:var(--faint); font-size:10px; font-weight:700; text-align:center; border-radius:10px; border:1px dashed var(--line); background:var(--soft); }
 .smart-group-empty i,.smart-group-empty svg { width:14px; height:14px; }
+.plugin-node .plugin-node-body {
+    height: calc(100% - 76px);
+    overflow: auto;
+}
+
+.plugin-node-run {
+    position: absolute;
+    right: 12px;
+    bottom: 10px;
+    z-index: 3;
+}
+
+.unknown-plugin-node {
+    display: grid;
+    gap: 6px;
+    padding: 14px;
+    color: #b45309;
+}
+
+.unknown-plugin-node small {
+    color: var(--muted, #64748b);
+}

@@ -35,6 +35,7 @@ from io import BytesIO
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
+from plugin_discovery import discover_plugins
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -227,6 +228,7 @@ STATIC_RUNNINGHUB_API_PROVIDERS_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "api_
 STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "models_registry.json")
 OUTPUT_DIR = RUNTIME_PATHS.output_dir
 ASSETS_DIR = RUNTIME_PATHS.assets_dir
+PLUGINS_DIR = os.path.join(BASE_DIR, "plugins")
 OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
 ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
@@ -1564,6 +1566,7 @@ os.makedirs(CANVAS_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+app.mount("/plugins", StaticFiles(directory=PLUGINS_DIR), name="plugins")
 
 # --- Pydantic 模型 ---
 
@@ -16084,6 +16087,11 @@ async def delete_conversation(conversation_id: str, request: Request, x_user_id:
 @app.get("/api/canvases")
 async def canvases():
     return {"canvases": list_canvases()}
+
+@app.get("/api/plugins")
+async def plugins():
+    """Discover trusted repository-local plugins without hardcoding their ids."""
+    return await asyncio.to_thread(discover_plugins, PLUGINS_DIR)
 
 @app.get("/api/projects")
 async def get_projects():

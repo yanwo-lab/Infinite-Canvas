@@ -1,0 +1,248 @@
+const PLUGIN_NODE_PREFIX = 'plugin:';
+
+function clone(value) {
+    if(value === undefined) return undefined;
+    return JSON.parse(JSON.stringify(value));
+}
+
+function pluginNodeType(type) {
+    return String(type || '').startsWith(PLUGIN_NODE_PREFIX) ? String(type) : `${PLUGIN_NODE_PREFIX}${type}`;
+}
+
+function definitionType(nodeOrType) {
+    const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType?.type;
+    return String(type || '').startsWith(PLUGIN_NODE_PREFIX) ? String(type).slice(PLUGIN_NODE_PREFIX.length) : '';
+}
+
+function errorResult(stage, error) {
+    return {stage, message:error?.message || String(error)};
+}
+
+export function normalizePortDefinitions(ports, direction) {
+    const fallbackId = direction === 'output' ? 'output' : 'input';
+    const source = Array.isArray(ports) ? ports : [{id:fallbackId}];
+    return source.map(port => {
+        const id = String(port?.id || fallbackId);
+        return {id, label:String(port?.label || id), type:String(port?.type || 'any'), direction};
+    });
+}
+
+export function normalizeExecutionResult(result={}) {
+    const outputs = result?.outputs && typeof result.outputs === 'object' ? result.outputs : {};
+    const ports = Object.keys(outputs);
+    return {
+        outputs,
+        flow:{continue:Array.isArray(result?.flow?.continue) ? result.flow.continue : ports},
+        repeat:Array.isArray(result?.repeat) ? result.repeat : [],
+        meta:result?.meta && typeof result.meta === 'object' ? result.meta : {},
+        ...(result?.error ? {error:result.error} : {}),
+    };
+}
+
+export class PluginHost {
+    constructor(adapter={}) {
+        this.adapter = adapter;
+        this.nodeTypes = new Map();
+        this.plugins = new Map();
+        this.loadErrors = [];
+    }
+
+    _log(stage, error, detail='') {
+        const message = `[plugins] ${stage}${detail ? ` (${detail})` : ''}: ${error?.message || error}`;
+        this.adapter.log?.('error', message, error);
+        return errorResult(stage, error);
+    }
+
+    registerNode(definition) {
+        const type = String(definition?.type || '').trim();
+        if(!type) throw new Error('Plugin node type is required');
+        if(this.nodeTypes.has(type)) throw new Error(`Plugin node type already registered: ${type}`);
+        this.nodeTypes.set(type, Object.freeze({...definition, type}));
+        return () => this.nodeTypes.delete(type);
+    }
+
+    getNodeDefinition(nodeOrType) { return this.nodeTypes.get(definitionType(nodeOrType) || String(nodeOrType || '')); }
+    listNodeDefinitions() { return [...this.nodeTypes.values()]; }
+    isPluginNode(node) { return Boolean(definitionType(node)); }
+    isKnownNode(node) { return Boolean(this.getNodeDefinition(node)); }
+    getNodePorts(node, direction) {
+        const definition = this.getNodeDefinition(node);
+        return normalizePortDefinitions(definition?.[direction === 'output' ? 'outputs' : 'inputs'], direction);
+    }
+    canConnect(fromNode, fromPort, toNode, toPort) {
+        if(!this.isKnownNode(fromNode) || !this.isKnownNode(toNode)) return true;
+        const output = this.getNodePorts(fromNode, 'output').find(port => port.id === fromPort);
+        const input = this.getNodePorts(toNode, 'input').find(port => port.id === toPort);
+        if(!output || !input) return false;
+        return output.type === 'any' || input.type === 'any' || output.type === input.type;
+    }
+
+    createNode(type, options={}) {
+        const definition = this.getNodeDefinition(type);
+        if(!definition) throw new Error(`Unknown plugin node type: ${type}`);
+        this.adapter.beforeMutation?.();
+        let state = {};
+        let pluginError;
+        try { state = definition.create?.({host:this._facade(), options:clone(options)}) || {}; }
+        catch(error) { pluginError = this._log('create', error, definition.type); }
+        const node = {
+            id:options.id || `plugin-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            type:pluginNodeType(definition.type), x:Number(options.x) || 0, y:Number(options.y) || 0,
+            title:definition.title || definition.type, created_at:Date.now(), ...clone(state),
+        };
+        if(pluginError) node.pluginError = pluginError;
+        this.adapter.getNodes?.().push(node);
+        this.adapter.requestRender?.();
+        this.adapter.requestSave?.();
+        return node;
+    }
+
+    updateNode(id, patch, options={}) {
+        const node = this.adapter.getNodes?.().find(item => item.id === id);
+        if(!node) return null;
+        Object.assign(node, clone(patch || {}));
+        if(options.render !== false) this.adapter.requestRender?.();
+        this.adapter.requestSave?.();
+        return clone(node);
+    }
+
+    getNode(id) { return clone(this.adapter.getNodes?.().find(item => item.id === id) || null); }
+    getIncomingConnections(id) { return clone((this.adapter.getConnections?.() || []).filter(item => item.to === id)); }
+    getOutgoingConnections(id) { return clone((this.adapter.getConnections?.() || []).filter(item => item.from === id)); }
+
+    renderNode(node) {
+        const definition = this.getNodeDefinition(node);
+        if(!definition) return this.renderUnknownNode(node);
+        try { return String(definition.render?.({node:clone(node), host:this._facade()}) || ''); }
+        catch(error) {
+            const failure = this._log('render', error, definition.type);
+            return `<div class="plugin-node-error">Plugin error: ${this.escapeHtml(failure.message)}</div>`;
+        }
+    }
+
+    bindNodeUI(element, node) {
+        const definition = this.getNodeDefinition(node);
+        if(!definition) return;
+        try { definition.bindUI?.({element, node:clone(node), host:this._facade()}); }
+        catch(error) { this._log('bindUI', error, definition.type); }
+    }
+
+    async executeNode(node, inputs={}, context={}) {
+        const definition = this.getNodeDefinition(node);
+        if(!definition) return normalizeExecutionResult({error:{stage:'execute', message:`Missing plugin node: ${definitionType(node)}`}});
+        try {
+            return normalizeExecutionResult(await definition.execute?.({node:clone(node), inputs:clone(inputs), context, host:this._facade()}));
+        } catch(error) {
+            return normalizeExecutionResult({error:this._log('execute', error, definition.type)});
+        }
+    }
+
+    collectInputs(node, results) {
+        const inputs = {};
+        for(const connection of this.getIncomingConnections(node.id)) {
+            const outputPort = connection.fromPort || 'output';
+            const inputPort = connection.toPort || 'input';
+            const values = results.get(connection.from)?.outputs?.[outputPort] || [];
+            inputs[inputPort] = [...(inputs[inputPort] || []), ...clone(values)];
+        }
+        return inputs;
+    }
+
+    async executeGraph(targetNodeId, context={}) {
+        const results = new Map();
+        const visiting = new Set();
+        const run = async nodeId => {
+            if(results.has(nodeId)) return results.get(nodeId);
+            if(visiting.has(nodeId)) throw new Error('Plugin workflow contains a cycle');
+            visiting.add(nodeId);
+            const node = this.adapter.getNodes?.().find(item => item.id === nodeId);
+            if(!node || !this.isPluginNode(node)) throw new Error(`Plugin node not found: ${nodeId}`);
+            for(const connection of this.getIncomingConnections(nodeId)) {
+                const upstream = this.adapter.getNodes?.().find(item => item.id === connection.from);
+                if(upstream && this.isPluginNode(upstream)) await run(upstream.id);
+            }
+            const result = await this.executeNode(node, this.collectInputs(node, results), context);
+            results.set(nodeId, result);
+            visiting.delete(nodeId);
+            return result;
+        };
+        await run(targetNodeId);
+        return results;
+    }
+
+    serializeNode(node) {
+        const definition = this.getNodeDefinition(node);
+        if(!definition) return clone(node);
+        try {
+            const pluginData = definition.serialize ? definition.serialize(clone(node)) : clone(node.pluginData || {});
+            return {...clone(node), pluginData:clone(pluginData)};
+        } catch(error) {
+            this._log('serialize', error, definition.type);
+            return clone(node);
+        }
+    }
+
+    deserializeNode(raw) {
+        const definition = this.getNodeDefinition(raw);
+        if(!definition) return clone(raw);
+        try {
+            const state = definition.deserialize ? definition.deserialize(clone(raw.pluginData ?? raw)) : clone(raw.pluginData || {});
+            return {...clone(raw), ...clone(state), unknownPlugin:false};
+        } catch(error) {
+            return {...clone(raw), pluginError:this._log('deserialize', error, definition.type)};
+        }
+    }
+
+    renderUnknownNode(node) {
+        const type = definitionType(node) || node?.type || 'unknown';
+        return `<div class="unknown-plugin-node"><strong>Unknown Plugin Node</strong><span>${this.escapeHtml(type)}</span><small>插件缺失，原始数据已保留</small></div>`;
+    }
+
+    async loadFromApi(url='/api/plugins', importer=value => import(value), documentRef=globalThis.document) {
+        let response;
+        try {
+            response = await fetch(url);
+            if(!response.ok) throw new Error(`plugin discovery returned ${response.status}`);
+            response = await response.json();
+        } catch(error) {
+            this.loadErrors.push(this._log('discovery', error));
+            return {plugins:[], errors:this.loadErrors};
+        }
+        for(const manifest of response.plugins || []) {
+            try {
+                for(const styleUrl of manifest.styleUrls || []) this.loadStyle(styleUrl, manifest.id, documentRef);
+                const module = await importer(manifest.moduleUrl);
+                if(typeof module.activate !== 'function') throw new Error('activate(host) export is required');
+                try { await module.activate(this._facade(manifest)); }
+                catch(error) { throw Object.assign(error, {pluginStage:'activate'}); }
+                this.plugins.set(manifest.id, manifest);
+            } catch(error) {
+                const stage = error?.pluginStage || 'module import';
+                this.loadErrors.push(this._log(stage, error, manifest.id));
+            }
+        }
+        return {plugins:[...this.plugins.values()], errors:[...(response.errors || []), ...this.loadErrors]};
+    }
+
+    loadStyle(url, pluginId, documentRef=globalThis.document) {
+        if(!documentRef?.head || documentRef.querySelector?.(`link[data-plugin-style="${pluginId}:${url}"]`)) return;
+        const link = documentRef.createElement('link');
+        link.rel = 'stylesheet'; link.href = url; link.dataset.pluginStyle = `${pluginId}:${url}`;
+        link.onerror = error => this._log('style', error, pluginId);
+        documentRef.head.appendChild(link);
+    }
+
+    escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    }
+
+    _facade(manifest=null) {
+        return Object.freeze({
+            manifest:manifest ? clone(manifest) : undefined,
+            registerNode:this.registerNode.bind(this), updateNode:this.updateNode.bind(this), getNode:this.getNode.bind(this),
+            requestRender:() => this.adapter.requestRender?.(), requestSave:() => this.adapter.requestSave?.(),
+            getIncomingConnections:this.getIncomingConnections.bind(this), getOutgoingConnections:this.getOutgoingConnections.bind(this),
+            toast:message => this.adapter.toast?.(message), log:(level, message, detail) => this.adapter.log?.(level, message, detail),
+        });
+    }
+}

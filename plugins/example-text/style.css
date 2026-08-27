@@ -1,0 +1,15 @@
+.plugin-node.plugin-example-text .example-text-fields {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+}
+
+.plugin-node.plugin-example-text textarea {
+    min-height: 72px;
+    resize: vertical;
+}
+
+.plugin-node.plugin-example-text output {
+    color: var(--muted, #64748b);
+    overflow-wrap: anywhere;
+}
