@@ -183,7 +183,7 @@ export class PluginHost {
         const upstreamError = [...results.values()].find(result => result?.error)?.error;
         const execution = {results, runs:[], error:upstreamError || startResult?.error || null};
         if(!startNode || !startResult || execution.error) return execution;
-        await this._dispatchResult(startNode, startResult, results, context, execution, false);
+        await this._dispatchResult(startNode, startResult, results, context, execution, true);
         return execution;
     }
 

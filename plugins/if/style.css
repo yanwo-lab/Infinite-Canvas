@@ -1,0 +1,11 @@
+.plugin-node.plugin-if .if-condition-field {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+    line-height: 1.4;
+}
+
+.plugin-node.plugin-if .if-condition-field span {
+    color: var(--muted, #888);
+    font-size: 12px;
+}

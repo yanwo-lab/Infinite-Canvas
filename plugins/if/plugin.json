@@ -1,0 +1,8 @@
+{
+  "id": "if",
+  "name": "IF",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "main": "index.js",
+  "styles": ["style.css"]
+}
