@@ -1,0 +1,29 @@
+.plugin-node.plugin-list .list-fields {
+    display: grid;
+    gap: 8px;
+}
+
+.plugin-node.plugin-list .list-items {
+    display: grid;
+    gap: 6px;
+}
+
+.plugin-node.plugin-list .list-item {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) repeat(3, 28px);
+    gap: 4px;
+}
+
+.plugin-node.plugin-list .list-item-value {
+    min-width: 0;
+}
+
+.plugin-node.plugin-list .list-item button {
+    padding: 0;
+}
+
+.plugin-node.plugin-list .list-empty {
+    color: var(--muted, #888);
+    font-size: 12px;
+    padding: 6px 0;
+}
