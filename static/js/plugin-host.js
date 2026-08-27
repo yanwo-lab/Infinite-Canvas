@@ -159,7 +159,13 @@ export class PluginHost {
             if(!node || !this.isPluginNode(node)) throw new Error(`Plugin node not found: ${nodeId}`);
             for(const connection of this.getIncomingConnections(nodeId)) {
                 const upstream = this.adapter.getNodes?.().find(item => item.id === connection.from);
-                if(upstream && this.isPluginNode(upstream)) await run(upstream.id);
+                if(upstream && this.isPluginNode(upstream)) {
+                    const upstreamResult = await run(upstream.id);
+                    if(upstreamResult?.error) {
+                        visiting.delete(nodeId);
+                        return upstreamResult;
+                    }
+                }
             }
             const result = await this.executeNode(node, this.collectInputs(node, results), context);
             results.set(nodeId, result);
@@ -168,6 +174,61 @@ export class PluginHost {
         };
         await run(targetNodeId);
         return results;
+    }
+
+    async executeWorkflow(startNodeId, context={}) {
+        const results = await this.executeGraph(startNodeId, context);
+        const startNode = this.adapter.getNodes?.().find(item => item.id === startNodeId);
+        const startResult = results.get(startNodeId);
+        const upstreamError = [...results.values()].find(result => result?.error)?.error;
+        const execution = {results, runs:[], error:upstreamError || startResult?.error || null};
+        if(!startNode || !startResult || execution.error) return execution;
+        await this._dispatchResult(startNode, startResult, results, context, execution, false);
+        return execution;
+    }
+
+    async _dispatchResult(sourceNode, sourceResult, baseResults, context, execution, allowSingle=true) {
+        if(execution.error) return;
+        const isRepeat = sourceResult.repeat.length > 0 || sourceResult.meta?.repeat === true;
+        const frames = isRepeat ? sourceResult.repeat : (allowSingle ? [{outputs:sourceResult.outputs, context:{}}] : []);
+        for(const [iteration, frame] of frames.entries()) {
+            if(execution.error) return;
+            const frameOutputs = frame?.outputs && typeof frame.outputs === 'object' ? frame.outputs : {};
+            const continuedPorts = new Set(Array.isArray(sourceResult.flow?.continue) ? sourceResult.flow.continue : Object.keys(frameOutputs));
+            const outgoing = this.getOutgoingConnections(sourceNode.id).filter(connection => {
+                const port = connection.fromPort || 'output';
+                return continuedPorts.has(port) && Object.hasOwn(frameOutputs, port);
+            });
+            const targets = new Map();
+            for(const connection of outgoing) {
+                if(!targets.has(connection.to)) targets.set(connection.to, []);
+                targets.get(connection.to).push(connection);
+            }
+            for(const [targetId, sourceConnections] of targets) {
+                const target = this.adapter.getNodes?.().find(item => item.id === targetId);
+                if(!target || !this.isPluginNode(target)) continue;
+                const inputs = this.collectInputs(target, baseResults);
+                for(const connection of sourceConnections) {
+                    const inputPort = connection.toPort || 'input';
+                    const outputPort = connection.fromPort || 'output';
+                    inputs[inputPort] = clone(frameOutputs[outputPort] || []);
+                }
+                const runContext = {
+                    ...context,
+                    ...(frame?.context && typeof frame.context === 'object' ? clone(frame.context) : {}),
+                    repeat:{sourceNodeId:sourceNode.id, key:String(frame?.key ?? iteration), iteration},
+                };
+                const result = await this.executeNode(target, inputs, runContext);
+                execution.runs.push({nodeId:target.id, context:clone(runContext), result});
+                if(result.error) {
+                    execution.error = result.error;
+                    return;
+                }
+                const nextResults = new Map(baseResults);
+                nextResults.set(target.id, result);
+                await this._dispatchResult(target, result, nextResults, runContext, execution, true);
+            }
+        }
     }
 
     serializeNode(node) {

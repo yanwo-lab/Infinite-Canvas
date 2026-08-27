@@ -8417,9 +8417,8 @@ function pluginNodeHtml(node){
 
 async function runPluginNode(node){
     if(!pluginHost || !node) return;
-    const results = await pluginHost.executeGraph(node.id, {canvasId});
-    const result = results.get(node.id);
-    if(result?.error) toast(result.error.message || 'Plugin execution failed');
+    const execution = await pluginHost.executeWorkflow(node.id, {canvasId});
+    if(execution.error) toast(execution.error.message || 'Plugin execution failed');
     else toast(`${node.title || 'Plugin'} complete`);
     render();
     scheduleSave();

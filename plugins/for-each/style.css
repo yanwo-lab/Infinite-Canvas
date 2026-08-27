@@ -1,0 +1,10 @@
+.plugin-node.plugin-for-each .for-each-fields {
+    display: grid;
+    gap: 6px;
+}
+
+.plugin-node.plugin-for-each .for-each-fields span {
+    color: var(--muted, #888);
+    font-size: 12px;
+    line-height: 1.4;
+}
