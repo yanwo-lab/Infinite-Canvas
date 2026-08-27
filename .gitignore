@@ -7,3 +7,7 @@ __pycache__/
 
 # Default local Docker volumes
 docker-data/
+
+# Local Python development environments
+.venv-host/
+.venv-code/

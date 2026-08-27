@@ -1,17 +1,23 @@
 # Infinite Canvas development environment
 
-_CANVAS_PYTHON_ENV=""
-if [ -f /workspace/envs/python/3.10.12/infinite-canvas/bin/activate ]; then
-    _CANVAS_PYTHON_ENV=/workspace/envs/python/3.10.12/infinite-canvas
-elif [ -f /opt/dev-envs/python/3.10.12/infinite-canvas/bin/activate ]; then
-    _CANVAS_PYTHON_ENV=/opt/dev-envs/python/3.10.12/infinite-canvas
+# code-server / Codex
+if [ -x /envs/uv/bin/uv ] && [ -x "$(pwd)/.venv-code/bin/python" ]; then
+    export UV_BIN=/envs/uv/bin/uv
+    export UV_PYTHON_INSTALL_DIR=/envs/python
+    export CANVAS_PYTHON_ENV="$(pwd)/.venv-code"
+
+# NAS host
+elif [ -x /opt/dev-envs/uv/bin/uv ] && [ -x "$(pwd)/.venv-host/bin/python" ]; then
+    export UV_BIN=/opt/dev-envs/uv/bin/uv
+    export UV_PYTHON_INSTALL_DIR=/opt/dev-envs/python
+    export CANVAS_PYTHON_ENV="$(pwd)/.venv-host"
+
 else
-    echo "Infinite Canvas Python development environment not found." >&2
-    unset _CANVAS_PYTHON_ENV
+    echo "Infinite Canvas development environment not found." >&2
     return 1 2>/dev/null || exit 1
 fi
 
-# Activation changes PATH only in the shell that explicitly sources this file.
-source "${_CANVAS_PYTHON_ENV}/bin/activate"
-export CANVAS_PYTHON_ENV="${_CANVAS_PYTHON_ENV}"
-unset _CANVAS_PYTHON_ENV
+export PATH="$(dirname "$UV_BIN"):$CANVAS_PYTHON_ENV/bin:$PATH"
+export VIRTUAL_ENV="$CANVAS_PYTHON_ENV"
+
+unset PYTHONHOME
