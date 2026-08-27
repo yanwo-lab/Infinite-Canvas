@@ -49,7 +49,10 @@ export class PluginHost {
         this.adapter = adapter;
         this.nodeTypes = new Map();
         this.plugins = new Map();
+        this.pluginDisposers = new Map();
+        this.toolbarItems = new Map();
         this.loadErrors = [];
+        this.uiDocument = null;
     }
 
     _log(stage, error, detail='') {
@@ -114,6 +117,55 @@ export class PluginHost {
     getNode(id) { return clone(this.adapter.getNodes?.().find(item => item.id === id) || null); }
     getIncomingConnections(id) { return clone((this.adapter.getConnections?.() || []).filter(item => item.to === id)); }
     getOutgoingConnections(id) { return clone((this.adapter.getConnections?.() || []).filter(item => item.from === id)); }
+
+    mountUI(documentRef=globalThis.document) {
+        this.uiDocument = documentRef || null;
+        for(const item of this.toolbarItems.values()) this._mountToolbarItem(item);
+    }
+
+    registerToolbarItem(definition, pluginId='plugin') {
+        const id = String(definition?.id || '').trim();
+        if(!id) throw new Error('Toolbar item id is required');
+        const owner = String(pluginId || 'plugin');
+        const key = `${owner}:${id}`;
+        if(this.toolbarItems.has(key)) throw new Error(`Toolbar item already registered: ${key}`);
+        const item = {key, pluginId:owner, definition:{...definition, id}, element:null};
+        this.toolbarItems.set(key, item);
+        this._mountToolbarItem(item);
+        return () => {
+            item.element?.remove?.();
+            this.toolbarItems.delete(key);
+        };
+    }
+
+    _mountToolbarItem(item) {
+        if(item.element || !this.uiDocument?.createElement) return;
+        const slot = this.adapter.getUISlot?.('toolbar');
+        if(!slot?.appendChild) return;
+        const button = this.uiDocument.createElement('button');
+        button.type = 'button';
+        button.className = 'plugin-toolbar-item';
+        button.dataset.pluginToolbarItem = item.key;
+        button.textContent = String(item.definition.label || item.definition.id);
+        button.title = String(item.definition.title || item.definition.label || item.definition.id);
+        button.addEventListener('click', event => {
+            try { item.definition.onClick?.({event, host:this._facade({id:item.pluginId})}); }
+            catch(error) { this._log('toolbar click', error, item.key); }
+        });
+        slot.appendChild(button);
+        item.element = button;
+    }
+
+    unloadPlugin(pluginId) {
+        const id = String(pluginId || '');
+        const disposers = this.pluginDisposers.get(id) || [];
+        for(const dispose of [...disposers].reverse()) {
+            try { dispose?.(); }
+            catch(error) { this._log('unload', error, id); }
+        }
+        this.pluginDisposers.delete(id);
+        this.plugins.delete(id);
+    }
 
     renderNode(node) {
         const definition = this.getNodeDefinition(node);
@@ -290,6 +342,7 @@ export class PluginHost {
     }
 
     async loadFromApi(url='/api/plugins', importer=value => import(value), documentRef=globalThis.document) {
+        this.mountUI(documentRef);
         let response;
         try {
             response = await fetch(url);
@@ -300,14 +353,25 @@ export class PluginHost {
             return {plugins:[], errors:this.loadErrors};
         }
         for(const manifest of response.plugins || []) {
+            const disposers = [];
             try {
-                for(const styleUrl of manifest.styleUrls || []) this.loadStyle(styleUrl, manifest.id, documentRef);
+                if(this.plugins.has(manifest.id)) this.unloadPlugin(manifest.id);
+                for(const styleUrl of manifest.styleUrls || []) {
+                    const dispose = this.loadStyle(styleUrl, manifest.id, documentRef);
+                    if(dispose) disposers.push(dispose);
+                }
                 const module = await importer(manifest.moduleUrl);
                 if(typeof module.activate !== 'function') throw new Error('activate(host) export is required');
-                try { await module.activate(this._facade(manifest)); }
+                try { await module.activate(this._facade(manifest, disposers)); }
                 catch(error) { throw Object.assign(error, {pluginStage:'activate'}); }
                 this.plugins.set(manifest.id, manifest);
+                this.pluginDisposers.set(manifest.id, disposers);
             } catch(error) {
+                for(const dispose of [...disposers].reverse()) {
+                    try { dispose?.(); } catch(_) {}
+                }
+                this.plugins.delete(manifest.id);
+                this.pluginDisposers.delete(manifest.id);
                 const stage = error?.pluginStage || 'module import';
                 this.loadErrors.push(this._log(stage, error, manifest.id));
             }
@@ -316,21 +380,27 @@ export class PluginHost {
     }
 
     loadStyle(url, pluginId, documentRef=globalThis.document) {
-        if(!documentRef?.head || documentRef.querySelector?.(`link[data-plugin-style="${pluginId}:${url}"]`)) return;
+        if(!documentRef?.head || documentRef.querySelector?.(`link[data-plugin-style="${pluginId}:${url}"]`)) return null;
         const link = documentRef.createElement('link');
         link.rel = 'stylesheet'; link.href = url; link.dataset.pluginStyle = `${pluginId}:${url}`;
         link.onerror = error => this._log('style', error, pluginId);
         documentRef.head.appendChild(link);
+        return () => link.remove?.();
     }
 
     escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     }
 
-    _facade(manifest=null) {
+    _facade(manifest=null, disposers=null) {
+        const track = dispose => {
+            if(disposers && typeof dispose === 'function') disposers.push(dispose);
+            return dispose;
+        };
         return Object.freeze({
             manifest:manifest ? clone(manifest) : undefined,
-            registerNode:this.registerNode.bind(this), updateNode:this.updateNode.bind(this), getNode:this.getNode.bind(this),
+            registerNode:definition => track(this.registerNode(definition)), updateNode:this.updateNode.bind(this), getNode:this.getNode.bind(this),
+            registerToolbarItem:definition => track(this.registerToolbarItem(definition, manifest?.id)),
             requestRender:() => this.adapter.requestRender?.(), requestSave:() => this.adapter.requestSave?.(),
             getIncomingConnections:this.getIncomingConnections.bind(this), getOutgoingConnections:this.getOutgoingConnections.bind(this),
             toast:message => this.adapter.toast?.(message), log:(level, message, detail) => this.adapter.log?.(level, message, detail),

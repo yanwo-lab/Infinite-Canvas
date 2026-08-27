@@ -8447,6 +8447,7 @@ async function initializePluginHost(){
             getConnections:() => canvas?.connections || [],
             beforeMutation:() => pushUndo(),
             requestRender:() => render(), requestSave:() => scheduleSave(), toast,
+            getUISlot:name => name === 'toolbar' ? document.getElementById('pluginToolbarSlot') : null,
             log:(level, message, detail) => console[level] ? console[level](message, detail || '') : console.log(message, detail || ''),
         });
         await pluginHost.loadFromApi();

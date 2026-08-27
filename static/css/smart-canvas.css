@@ -1594,3 +1594,25 @@ input[type=range].smart-range::-webkit-slider-thumb { -webkit-appearance:none; w
 .unknown-plugin-node small {
     color: var(--muted, #64748b);
 }
+
+.plugin-toolbar-slot {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    left: 50%;
+    position: fixed;
+    top: 14px;
+    transform: translateX(-50%);
+    z-index: 35;
+}
+.plugin-toolbar-slot:empty { display:none; }
+.plugin-toolbar-item {
+    background: var(--panel, rgba(255,255,255,.92));
+    border: 1px solid var(--border, rgba(148,163,184,.35));
+    border-radius: 9px;
+    color: var(--text, #0f172a);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 7px 10px;
+}

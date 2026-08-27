@@ -1,0 +1,4 @@
+.plugin-toolbar-item[data-plugin-toolbar-item="example-toolbar:check"] {
+    border-color: rgba(99, 102, 241, .45);
+    color: #4f46e5;
+}
