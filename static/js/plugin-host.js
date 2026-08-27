@@ -18,6 +18,11 @@ function errorResult(stage, error) {
     return {stage, message:error?.message || String(error)};
 }
 
+function abortedResult(signal) {
+    const reason = signal?.reason;
+    return {stage:'aborted', message:reason?.message || String(reason || 'Workflow execution aborted')};
+}
+
 export function normalizePortDefinitions(ports, direction) {
     const fallbackId = direction === 'output' ? 'output' : 'input';
     const source = Array.isArray(ports) ? ports : [{id:fallbackId}];
@@ -154,6 +159,11 @@ export class PluginHost {
         const run = async nodeId => {
             if(results.has(nodeId)) return results.get(nodeId);
             if(visiting.has(nodeId)) throw new Error('Plugin workflow contains a cycle');
+            if(context?.signal?.aborted) {
+                const result = normalizeExecutionResult({error:abortedResult(context.signal)});
+                results.set(nodeId, result);
+                return result;
+            }
             visiting.add(nodeId);
             const node = this.adapter.getNodes?.().find(item => item.id === nodeId);
             if(!node || !this.isPluginNode(node)) throw new Error(`Plugin node not found: ${nodeId}`);
@@ -167,6 +177,12 @@ export class PluginHost {
                     }
                 }
             }
+            if(context?.signal?.aborted) {
+                const result = normalizeExecutionResult({error:abortedResult(context.signal)});
+                results.set(nodeId, result);
+                visiting.delete(nodeId);
+                return result;
+            }
             const result = await this.executeNode(node, this.collectInputs(node, results), context);
             results.set(nodeId, result);
             visiting.delete(nodeId);
@@ -177,18 +193,28 @@ export class PluginHost {
     }
 
     async executeWorkflow(startNodeId, context={}) {
-        const results = await this.executeGraph(startNodeId, context);
+        const executionContext = {
+            ...context,
+            runId:String(context.runId || `plugin-run-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
+            signal:context.signal || null,
+            logger:context.logger || ((level, message, detail) => this.adapter.log?.(level, message, detail)),
+        };
+        const results = await this.executeGraph(startNodeId, executionContext);
         const startNode = this.adapter.getNodes?.().find(item => item.id === startNodeId);
         const startResult = results.get(startNodeId);
         const upstreamError = [...results.values()].find(result => result?.error)?.error;
-        const execution = {results, runs:[], error:upstreamError || startResult?.error || null};
+        const execution = {context:executionContext, results, runs:[], error:upstreamError || startResult?.error || null};
         if(!startNode || !startResult || execution.error) return execution;
-        await this._dispatchResult(startNode, startResult, results, context, execution, true);
+        await this._dispatchResult(startNode, startResult, results, executionContext, execution, true);
         return execution;
     }
 
     async _dispatchResult(sourceNode, sourceResult, baseResults, context, execution, allowSingle=true) {
         if(execution.error) return;
+        if(context?.signal?.aborted) {
+            execution.error = abortedResult(context.signal);
+            return;
+        }
         const isRepeat = sourceResult.repeat.length > 0 || sourceResult.meta?.repeat === true;
         const frames = isRepeat ? sourceResult.repeat : (allowSingle ? [{outputs:sourceResult.outputs, context:{}}] : []);
         for(const [iteration, frame] of frames.entries()) {
@@ -205,6 +231,10 @@ export class PluginHost {
                 targets.get(connection.to).push(connection);
             }
             for(const [targetId, sourceConnections] of targets) {
+                if(context?.signal?.aborted) {
+                    execution.error = abortedResult(context.signal);
+                    return;
+                }
                 const target = this.adapter.getNodes?.().find(item => item.id === targetId);
                 if(!target || !this.isPluginNode(target)) continue;
                 const inputs = this.collectInputs(target, baseResults);
@@ -216,7 +246,7 @@ export class PluginHost {
                 const runContext = {
                     ...context,
                     ...(frame?.context && typeof frame.context === 'object' ? clone(frame.context) : {}),
-                    repeat:{sourceNodeId:sourceNode.id, key:String(frame?.key ?? iteration), iteration},
+                    ...(isRepeat ? {repeat:{sourceNodeId:sourceNode.id, key:String(frame?.key ?? iteration), iteration}} : {}),
                 };
                 const result = await this.executeNode(target, inputs, runContext);
                 execution.runs.push({nodeId:target.id, context:clone(runContext), result});
