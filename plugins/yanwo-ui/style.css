@@ -141,10 +141,17 @@
     color:#052e16;
 }
 
-.image-node.error,
-.image-node .plugin-node-error {
+.plugin-node:has(.plugin-node-error) {
     border-color:#fb7185;
+    box-shadow:0 0 0 1px rgba(251,113,133,.72), 0 16px 40px rgba(251,113,133,.16);
+}
+
+.plugin-node .plugin-node-error {
+    border:1px solid rgba(251,113,133,.62);
+    border-radius:10px;
+    background:color-mix(in srgb, #fb7185 12%, var(--card));
     color:#fda4af;
+    padding:10px;
 }
 
 .image-node :disabled,
@@ -181,8 +188,12 @@
 
 @media (max-width:760px) {
     .plugin-toolbar-slot {
-        left:auto;
+        left:14px;
         right:14px;
+        top:70px;
+        max-width:calc(100vw - 28px);
+        flex-wrap:wrap;
+        justify-content:center;
         transform:none;
     }
 

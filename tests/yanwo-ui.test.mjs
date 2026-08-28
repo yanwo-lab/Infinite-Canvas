@@ -10,7 +10,12 @@ function fakeUI() {
         children:[],
         appendChild(element) { this.children.push(element); element.parentNode = this; },
     };
+    const head = {
+        children:[],
+        appendChild(element) { this.children.push(element); element.parentNode = this; },
+    };
     const document = {
+        head,
         createElement:() => ({
             dataset:{},
             listeners:{},
@@ -27,29 +32,36 @@ test('Yanwo UI mounts an accessible workspace control without changing canvas da
     const {slot, document} = fakeUI();
     const nodes = [{id:'adapter-node', type:'plugin:list'}];
     const connections = [{from:'adapter-node', to:'next-node', kind:'flow'}];
+    const toasts = [];
     const host = new PluginHost({
         getUISlot:name => name === 'toolbar' ? slot : null,
         getNodes:() => nodes,
         getConnections:() => connections,
+        toast:message => toasts.push(message),
     });
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => ({ok:true, json:async () => ({plugins:[{
-        id:'yanwo-ui', moduleUrl:'/plugins/yanwo-ui/index.js', styleUrls:[],
+        id:'yanwo-ui', moduleUrl:'/plugins/yanwo-ui/index.js', styleUrls:['/plugins/yanwo-ui/style.css'],
     }]})});
 
     try {
         const loaded = await host.loadFromApi('/api/plugins', async () => ({activate}), document);
 
         assert.deepEqual(loaded.plugins.map(plugin => plugin.id), ['yanwo-ui']);
+        assert.equal(document.head.children.length, 1);
+        assert.equal(document.head.children[0].dataset.pluginStyle, 'yanwo-ui:/plugins/yanwo-ui/style.css');
         assert.equal(slot.children.length, 1);
         assert.equal(slot.children[0].type, 'button');
         assert.equal(slot.children[0].textContent, 'Yanwo UI');
         assert.match(slot.children[0].title, /Yanwo UI workspace/i);
+        slot.children[0].listeners.click();
+        assert.deepEqual(toasts, ['Yanwo UI workspace presentation is active']);
         assert.deepEqual(nodes, [{id:'adapter-node', type:'plugin:list'}]);
         assert.deepEqual(connections, [{from:'adapter-node', to:'next-node', kind:'flow'}]);
 
         host.unloadPlugin('yanwo-ui');
         assert.equal(slot.children.length, 0);
+        assert.equal(document.head.children.length, 0);
     } finally {
         globalThis.fetch = originalFetch;
     }

@@ -3,5 +3,6 @@ export async function activate(host) {
         id:'workspace',
         label:'Yanwo UI',
         title:'Yanwo UI workspace presentation',
+        onClick:() => host.toast?.('Yanwo UI workspace presentation is active'),
     });
 }
