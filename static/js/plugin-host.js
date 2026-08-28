@@ -330,7 +330,7 @@ export class PluginHost {
         if(!definition) return clone(raw);
         try {
             const state = definition.deserialize ? definition.deserialize(clone(raw.pluginData ?? raw)) : clone(raw.pluginData || {});
-            return {...clone(raw), ...clone(state), unknownPlugin:false};
+            return {...clone(raw), ...clone(state)};
         } catch(error) {
             return {...clone(raw), pluginError:this._log('deserialize', error, definition.type)};
         }

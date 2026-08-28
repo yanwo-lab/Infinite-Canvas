@@ -177,3 +177,20 @@ test('normalizes named input and output ports for the canvas UI', () => {
         {id:'input', label:'input', type:'any', direction:'input'},
     ]);
 });
+test('restoring a missing plugin preserves its saved record without persisting hydration state', async () => {
+    const {host} = makeHost();
+    const raw = {
+        id:'saved-list', type:'plugin:list', x:7,
+        custom:{opaque:true}, pluginData:{items:['first', 'second']},
+    };
+
+    assert.deepEqual(host.serializeNode(host.deserializeNode(raw)), raw);
+
+    const {activate} = await import('../plugins/list/index.js');
+    await activate(host._facade());
+    const restored = host.deserializeNode(raw);
+
+    assert.deepEqual(restored.items, ['first', 'second']);
+    assert.deepEqual(restored.custom, {opaque:true});
+    assert.equal(Object.hasOwn(restored, 'unknownPlugin'), false);
+});
