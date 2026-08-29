@@ -1,4 +1,68 @@
 # Infinite-Canvas
+
+## Docker Quick Start
+
+Run the published image without cloning this repository. Create a directory for
+the Compose file and its persistent data, then create `compose.yml` and paste
+the complete example below.
+
+```bash
+mkdir -p infinite-canvas && cd infinite-canvas
+mkdir -p docker-data/{data,uploads,cache,output,plugins}
+touch compose.yml
+```
+
+```yaml
+services:
+  infinite-canvas:
+    image: ghcr.io/yanwo-lab/infinite-canvas:latest
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3000:3000"
+    environment:
+      CANVAS_DATA_DIR: /data/app
+      CANVAS_UPLOADS_DIR: /data/uploads
+      CANVAS_CACHE_DIR: /data/cache
+      CANVAS_OUTPUT_DIR: /data/output
+      CANVAS_EXTERNAL_PLUGINS_DIR: /data/plugins
+    volumes:
+      - ./docker-data/data:/data/app
+      - ./docker-data/uploads:/data/uploads
+      - ./docker-data/cache:/data/cache
+      - ./docker-data/output:/data/output
+      - ./docker-data/plugins:/data/plugins
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 3000), 3); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+```
+
+```bash
+docker compose up -d
+```
+
+Open `http://localhost:3000`. The `latest` tag follows the newest stable
+release. For reproducible deployments, pin `ghcr.io/yanwo-lab/infinite-canvas`
+to an immutable `vX.Y.Z` tag or a manifest digest instead.
+
+For source development, clone the repository and use the source-build Compose
+definition:
+
+```bash
+git clone https://github.com/yanwo-lab/Infinite-Canvas.git
+cd Infinite-Canvas
+docker compose -f compose.dev.yml up -d --build
+```
+
+### Plugin trust warning
+
+Third-party plugins run with the same page privileges as Infinite Canvas.
+Install only trusted repositories. The Plugin Manager is not a sandbox or
+marketplace; installing a plugin executes that repository's browser code.
+
 Supports comfyui/API calls/modelscope calls
 
 配套的chrome采集插件已经上线：https://chromewebstore.google.com/detail/infinite-canvas-%E5%9B%BE%E5%83%8F%E8%A7%86%E9%A2%91%E6%96%87%E5%AD%97%E6%8A%93%E5%8F%96%E5%B7%A5/ajfhnbklbmpfaaookhfakohabnpmlcic?authuser=0&hl=en

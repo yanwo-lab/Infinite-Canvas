@@ -1,6 +1,8 @@
 services:
   infinite-canvas:
-    image: ${CANVAS_IMAGE:-ghcr.io/yanwo-lab/infinite-canvas:latest}
+    image: infinite-canvas:dev
+    build:
+      context: .
     restart: unless-stopped
     init: true
     ports:

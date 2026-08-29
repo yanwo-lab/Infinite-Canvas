@@ -1,54 +1,63 @@
 # Yanwo release process
 
-This document defines the Yanwo release version for this fork. It is separate
-from the upstream `VERSION` file maintained by `hero8152/Infinite-Canvas`.
+This document defines Yanwo releases for this fork. It does not change the
+upstream `VERSION` file maintained by `hero8152/Infinite-Canvas`; upstream
+`VERSION` and Yanwo release versions are independent.
 
-## Version identities
+## Release identities
 
-Every production release records four distinct identities:
+Record these four identities for every release:
 
-- **Yanwo release version:** the SemVer release tag, for example `v1.0.0`.
-- **Git revision:** the exact release commit, for example `a20833d`.
-- **Docker image tags:** the immutable release and revision tags plus `latest`.
-- **Upstream version:** the contents of the repository's `VERSION` file; Yanwo
-  releases do not modify it.
+- **Upstream `VERSION`:** the upstream application version; do not modify it
+  for a Yanwo release.
+- **Yanwo SemVer:** the immutable GitHub Release tag, for example `vX.Y.Z`.
+- **Full Git revision:** the exact 40-character commit SHA, with its immutable
+  short SHA image tag.
+- **GHCR image:** the `ghcr.io/yanwo-lab/infinite-canvas` version tag, short
+  SHA tag, and multi-architecture manifest digest.
 
-The first stable Yanwo release is:
+The preserved v1.0.0 history is:
 
 - Yanwo release: `v1.0.0`
 - Git revision: `a20833d61b7a86dc8b189d3d6dad306d5c800ff9`
-- Docker image: `local/infinite-canvas:v1.0.0`
+- Docker image at the time: `local/infinite-canvas:v1.0.0`
 - Upstream `VERSION`: unchanged (`2026.08.04` at release time)
 
-## Release checklist
+## Stable GitHub Release workflow
 
-For every stable `vX.Y.Z` release:
+For each stable `vX.Y.Z` release:
 
-1. Confirm `main` is clean and synchronized with `origin/main`.
-2. Complete the production acceptance matrix and select the exact release
-   commit.
-3. Create an annotated Git tag `vX.Y.Z` at that commit and push the tag to
-   `origin`. Never move or replace an existing release tag.
-4. Build or select one validated Docker image for the release.
-5. Give that exact image all three local tags:
+1. Complete acceptance on the exact commit, confirm `main` is synchronized,
+   then create and push an annotated, never-moved tag named exactly `vX.Y.Z`.
+2. Create and publish the GitHub Release from that exact tag. Draft and
+   prerelease releases do not publish container images.
+3. The release workflow checks out the release tag and performs one GHCR
+   multiarch Buildx build for `linux/amd64,linux/arm64`. That one manifest is
+   tagged `vX.Y.Z`, the release short SHA, and `latest`.
+4. Version tags and short SHA tags are immutable. Move `latest` only for a
+   stable published release; no branch push may publish or move it.
+5. Record the full revision and the GHCR manifest digest from this release.
 
-   ```text
-   local/infinite-canvas:vX.Y.Z
-   local/infinite-canvas:latest
-   local/infinite-canvas:<short-sha>
-   ```
+GHCR package visibility can require one manual GitHub UI action after the
+first publish: open the `infinite-canvas` package settings, choose **Change
+visibility**, and set it to **Public**. GitHub Actions does not reliably make
+an organization package public automatically.
 
-6. Verify all three tags resolve to the same Docker image ID before deployment.
-7. Treat `vX.Y.Z` and `<short-sha>` as immutable. Never retarget either tag to
-   another image.
-8. Move `latest` only when a newer stable release has passed acceptance.
-9. Pin production Compose to `local/infinite-canvas:vX.Y.Z`; production must
-   never run the floating `latest` tag.
-10. Recreate production with `--no-build`, then verify health, HTTP, plugins,
-    persistent mounts, WebSocket ping/pong, Nginx, and the public domain.
-11. Roll back by pinning Compose to a previously retained `vX.Y.Z` image rather
-    than rebuilding old source.
-12. Do not change upstream `VERSION` as part of a Yanwo release.
+## Deployment and rollback
+
+Public users who need reproducibility must pin either the immutable version
+tag or the manifest digest, for example:
+
+```text
+ghcr.io/yanwo-lab/infinite-canvas:vX.Y.Z
+ghcr.io/yanwo-lab/infinite-canvas@sha256:<manifest-digest>
+```
+
+Owner production intentionally follows stable `latest`. Each production
+deployment and rollback record must capture the resolved version, SHA, and
+digest. Roll back by selecting a previously recorded immutable version/digest,
+then recreate with `--no-build`; never rebuild old source to reproduce a
+release.
 
 ## Semantic versioning
 
@@ -60,20 +69,14 @@ Yanwo releases follow SemVer:
 
 ## Verification commands
 
-Use the exact release values in place of the examples below:
+Replace the examples with the exact release values:
 
 ```bash
 git status --short --branch
-git rev-parse HEAD
-git rev-parse origin/main
 git rev-parse 'vX.Y.Z^{}'
 git ls-remote --tags origin 'refs/tags/vX.Y.Z' 'refs/tags/vX.Y.Z^{}'
-
-docker image inspect \
-  local/infinite-canvas:vX.Y.Z \
-  local/infinite-canvas:latest \
-  local/infinite-canvas:<short-sha> \
-  --format '{{.Id}} {{json .RepoTags}}'
+docker buildx imagetools inspect ghcr.io/yanwo-lab/infinite-canvas:vX.Y.Z
+docker buildx imagetools inspect ghcr.io/yanwo-lab/infinite-canvas:latest
 ```
 
 Keep the prior versioned image, production configuration, persistent data, and

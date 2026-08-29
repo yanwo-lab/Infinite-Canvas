@@ -1,0 +1,65 @@
+name: Publish container
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    if: >-
+      github.event.release.draft == false &&
+      github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must be exact numeric SemVer (vMAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set release revision
+        id: revision
+        shell: bash
+        run: |
+          echo "full_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/yanwo-lab/infinite-canvas:${{ github.event.release.tag_name }}
+            ghcr.io/yanwo-lab/infinite-canvas:latest
+            ghcr.io/yanwo-lab/infinite-canvas:${{ steps.revision.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.revision.outputs.full_sha }}
+            org.opencontainers.image.source=${{ github.event.release.html_url }}
