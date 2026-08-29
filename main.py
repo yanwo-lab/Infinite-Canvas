@@ -35,7 +35,7 @@ from io import BytesIO
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
-from plugin_discovery import discover_plugins
+from plugin_discovery import discover_plugins, open_plugin_asset
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -229,6 +229,7 @@ STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "mod
 OUTPUT_DIR = RUNTIME_PATHS.output_dir
 ASSETS_DIR = RUNTIME_PATHS.assets_dir
 PLUGINS_DIR = os.path.join(BASE_DIR, "plugins")
+EXTERNAL_PLUGINS_DIR = RUNTIME_PATHS.external_plugins_dir
 OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
 OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
 ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
@@ -1562,11 +1563,11 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(WORKFLOW_DIR, exist_ok=True)
 os.makedirs(CONVERSATION_DIR, exist_ok=True)
 os.makedirs(CANVAS_DIR, exist_ok=True)
+os.makedirs(EXTERNAL_PLUGINS_DIR, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
-app.mount("/plugins", StaticFiles(directory=PLUGINS_DIR), name="plugins")
 
 # --- Pydantic 模型 ---
 
@@ -16091,7 +16092,139 @@ async def canvases():
 @app.get("/api/plugins")
 async def plugins():
     """Discover trusted repository-local plugins without hardcoding their ids."""
-    return await asyncio.to_thread(discover_plugins, PLUGINS_DIR)
+    return await asyncio.to_thread(discover_plugins, PLUGINS_DIR, EXTERNAL_PLUGINS_DIR)
+
+PLUGIN_ASSET_CHUNK_SIZE = 64 * 1024
+
+
+class _PluginAssetStreamingResponse(StreamingResponse):
+    def __init__(self, descriptor: int, start: int, length: int, **kwargs):
+        self._descriptor = descriptor
+        self._descriptor_closed = False
+        try:
+            super().__init__(self._stream_descriptor(start, length), **kwargs)
+        except Exception:
+            self._close_descriptor()
+            raise
+
+    async def _read_descriptor_chunk(self, size: int, offset: int) -> bytes:
+        read_task = asyncio.create_task(
+            asyncio.to_thread(os.pread, self._descriptor, size, offset)
+        )
+        try:
+            return await asyncio.shield(read_task)
+        except asyncio.CancelledError:
+            try:
+                await read_task
+            finally:
+                raise
+
+    async def _stream_descriptor(self, start: int, length: int):
+        offset = start
+        remaining = length
+        while remaining > 0:
+            chunk = await self._read_descriptor_chunk(
+                min(PLUGIN_ASSET_CHUNK_SIZE, remaining),
+                offset,
+            )
+            if not chunk:
+                break
+            yield chunk
+            offset += len(chunk)
+            remaining -= len(chunk)
+
+    def _close_descriptor(self) -> None:
+        if self._descriptor_closed:
+            return
+        self._descriptor_closed = True
+        os.close(self._descriptor)
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._close_descriptor()
+
+
+def _parse_plugin_asset_range(value: str, size: int) -> tuple[int, int]:
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", value.strip(), flags=re.IGNORECASE)
+    if match is None:
+        raise ValueError("invalid byte range")
+    start_text, end_text = match.groups()
+    if not start_text and not end_text:
+        raise ValueError("empty byte range")
+    if size <= 0:
+        raise ValueError("range is unsatisfiable")
+
+    if not start_text:
+        suffix_length = int(end_text)
+        if suffix_length <= 0:
+            raise ValueError("range is unsatisfiable")
+        start = max(size - suffix_length, 0)
+        return start, size - 1
+
+    start = int(start_text)
+    if start >= size:
+        raise ValueError("range is unsatisfiable")
+    end = size - 1 if not end_text else min(int(end_text), size - 1)
+    if end < start:
+        raise ValueError("range is unsatisfiable")
+    return start, end
+
+
+@app.get("/plugins/{plugin_id}/{asset_path:path}")
+async def plugin_asset(plugin_id: str, asset_path: str, request: Request):
+    descriptor = await asyncio.to_thread(
+        open_plugin_asset,
+        PLUGINS_DIR,
+        EXTERNAL_PLUGINS_DIR,
+        plugin_id,
+        asset_path,
+    )
+    if descriptor is None:
+        raise HTTPException(status_code=404, detail="Plugin asset not found")
+    try:
+        size = os.fstat(descriptor).st_size
+    except OSError:
+        os.close(descriptor)
+        raise HTTPException(status_code=404, detail="Plugin asset not found")
+
+    start = 0
+    end = size - 1
+    status_code = 200
+    range_header = request.headers.get("range")
+    if range_header is not None:
+        try:
+            start, end = _parse_plugin_asset_range(range_header, size)
+        except (TypeError, ValueError):
+            os.close(descriptor)
+            return Response(
+                content=b"",
+                status_code=416,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": "0",
+                    "Content-Range": f"bytes */{size}",
+                },
+            )
+        status_code = 206
+
+    length = max(end - start + 1, 0)
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(length),
+    }
+    if status_code == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+
+    return _PluginAssetStreamingResponse(
+        descriptor,
+        start,
+        length,
+        status_code=status_code,
+        headers=headers,
+        media_type=mimetypes.guess_type(asset_path)[0] or "application/octet-stream",
+    )
 
 @app.get("/api/projects")
 async def get_projects():

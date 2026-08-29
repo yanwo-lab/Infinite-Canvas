@@ -19,6 +19,7 @@ class RuntimePathTests(unittest.TestCase):
                 "import json; from runtime_paths import RuntimePaths; paths = RuntimePaths.from_environment(); "
                 "print(json.dumps({"
                 "'data': paths.data_dir, "
+                "'external_plugins': paths.external_plugins_dir, "
                 "'assets': paths.assets_dir, "
                 "'uploads': paths.local_upload_dir, "
                 "'cache': paths.cache_dir, "
@@ -43,12 +44,14 @@ class RuntimePathTests(unittest.TestCase):
         paths = self.inspect_paths(
             {
                 "CANVAS_DATA_DIR": "/tmp/canvas-test-data",
+                "CANVAS_EXTERNAL_PLUGINS_DIR": "",
                 "CANVAS_UPLOADS_DIR": "/tmp/canvas-test-uploads",
                 "CANVAS_CACHE_DIR": "/tmp/canvas-test-cache",
             }
         )
 
         self.assertEqual(paths["data"], "/tmp/canvas-test-data")
+        self.assertEqual(paths["external_plugins"], "/tmp/canvas-test-data/plugins")
         self.assertEqual(paths["assets"], "/tmp/canvas-test-uploads")
         self.assertEqual(paths["uploads"], "/tmp/canvas-test-uploads/uploads")
         self.assertEqual(paths["cache"], "/tmp/canvas-test-cache")
@@ -61,12 +64,14 @@ class RuntimePathTests(unittest.TestCase):
         paths = self.inspect_paths(
             {
                 "CANVAS_DATA_DIR": "",
+                "CANVAS_EXTERNAL_PLUGINS_DIR": "",
                 "CANVAS_UPLOADS_DIR": "",
                 "CANVAS_CACHE_DIR": "",
             }
         )
 
         self.assertEqual(paths["data"], str(REPO_ROOT / "data"))
+        self.assertEqual(paths["external_plugins"], str(REPO_ROOT / "data" / "plugins"))
         self.assertEqual(paths["assets"], str(REPO_ROOT / "assets"))
         self.assertEqual(paths["uploads"], str(REPO_ROOT / "assets" / "uploads"))
         self.assertEqual(paths["cache"], str(REPO_ROOT / "data" / "cache"))
@@ -74,6 +79,20 @@ class RuntimePathTests(unittest.TestCase):
         self.assertEqual(paths["history"], str(REPO_ROOT / "history.json"))
         self.assertEqual(paths["global_config"], str(REPO_ROOT / "global_config.json"))
         self.assertEqual(paths["api_env"], str(REPO_ROOT / "API" / ".env"))
+
+    def test_external_plugins_directory_override_expands_and_resolves(self):
+        configured = "~/canvas-test-external-plugins/../plugin-bundle"
+        paths = self.inspect_paths(
+            {
+                "CANVAS_DATA_DIR": "/tmp/canvas-test-data",
+                "CANVAS_EXTERNAL_PLUGINS_DIR": configured,
+            }
+        )
+
+        self.assertEqual(
+            paths["external_plugins"],
+            str(Path(configured).expanduser().resolve()),
+        )
 
 
 if __name__ == "__main__":

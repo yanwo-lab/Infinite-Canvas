@@ -12,6 +12,7 @@ def _configured_path(name: str, default: Path) -> str:
 class RuntimePaths:
     base_dir: str
     data_dir: str
+    external_plugins_dir: str
     assets_dir: str
     cache_dir: str
     output_dir: str
@@ -21,12 +22,16 @@ class RuntimePaths:
     def from_environment(cls, base_dir: str | None = None) -> "RuntimePaths":
         base = Path(base_dir or Path(__file__).resolve().parent)
         data = Path(_configured_path("CANVAS_DATA_DIR", base / "data"))
+        external_plugins = Path(
+            _configured_path("CANVAS_EXTERNAL_PLUGINS_DIR", data / "plugins")
+        )
         assets = Path(_configured_path("CANVAS_UPLOADS_DIR", base / "assets"))
         cache = Path(_configured_path("CANVAS_CACHE_DIR", data / "cache"))
         output = Path(_configured_path("CANVAS_OUTPUT_DIR", base / "output"))
         return cls(
             base_dir=str(base.resolve()),
             data_dir=str(data),
+            external_plugins_dir=str(external_plugins),
             assets_dir=str(assets),
             cache_dir=str(cache),
             output_dir=str(output),
